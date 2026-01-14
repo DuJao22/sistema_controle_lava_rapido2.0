@@ -22,42 +22,60 @@ const App: React.FC = () => {
   });
 
   const refreshState = useCallback(() => {
-    setState(dbService.getLocalState());
+    try {
+      setState(dbService.getLocalState());
+    } catch (err) {
+      console.error("Erro ao atualizar estado local:", err);
+    }
   }, []);
 
-  // Check persistent session
+  // Check persistent session com tratamento de erro robusto
   useEffect(() => {
-    const savedUser = localStorage.getItem('lavarapido_current_user');
-    if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
+    try {
+      const savedUser = localStorage.getItem('lavarapido_current_user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.id) {
+          setCurrentUser(parsed);
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao recuperar sessão:", err);
+      localStorage.removeItem('lavarapido_current_user'); // Limpa se estiver corrompido
+    } finally {
+      setIsReady(true);
     }
-    setIsReady(true);
   }, []);
 
   // Background Polling Logic
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !isReady) return;
     
     const poll = async () => {
-      setSync(prev => ({ ...prev, status: 'syncing' }));
-      
-      const local = dbService.getLocalState();
-      const cloud = await dbService.fetchCloudState(sync.cloudKey);
-      
-      if (cloud) {
-        const syncedState = dbService.sync(sync.cloudKey, local, cloud);
-        dbService.saveLocalState(syncedState);
-        setState(syncedState);
-      } else {
-        await dbService.pushToCloud(sync.cloudKey, local);
+      try {
+        setSync(prev => ({ ...prev, status: 'syncing' }));
+        
+        const local = dbService.getLocalState();
+        const cloud = await dbService.fetchCloudState(sync.cloudKey);
+        
+        if (cloud) {
+          const syncedState = dbService.sync(sync.cloudKey, local, cloud);
+          dbService.saveLocalState(syncedState);
+          setState(syncedState);
+        } else {
+          await dbService.pushToCloud(sync.cloudKey, local);
+        }
+        
+        setSync(prev => ({ ...prev, status: 'online', lastSync: Date.now() }));
+      } catch (err) {
+        console.error("Erro na sincronização:", err);
+        setSync(prev => ({ ...prev, status: 'offline' }));
       }
-      
-      setSync(prev => ({ ...prev, status: 'online', lastSync: Date.now() }));
     };
 
     const interval = setInterval(poll, CLOUD_POLLING_INTERVAL);
     return () => clearInterval(interval);
-  }, [sync.cloudKey, currentUser]);
+  }, [sync.cloudKey, currentUser, isReady]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
@@ -68,6 +86,7 @@ const App: React.FC = () => {
     if (confirm("Deseja realmente sair do sistema?")) {
       setCurrentUser(null);
       localStorage.removeItem('lavarapido_current_user');
+      setActiveTab('dashboard');
     }
   };
 
@@ -92,7 +111,7 @@ const App: React.FC = () => {
       {(activeTab === 'expenses' || activeTab === 'reports') && (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400">
           <div className="bg-slate-100 p-6 rounded-full mb-4">
-             <RefreshCw size={48} className="opacity-20 animate-spin-slow" />
+             <RefreshCw size={48} className="opacity-20 animate-spin" />
           </div>
           <h2 className="text-xl font-bold text-slate-600 mb-2">Módulo em Construção</h2>
           <p className="text-sm max-w-xs text-center">
